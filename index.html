@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f766e">
+<title>টেক্সট টু স্পিচ</title>
+<style>
+  :root { --bg:#f4f7f6; --card:#fff; --ink:#12302b; --accent:#0f766e; --muted:#5b7a74; --line:#d5e3df; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Noto Sans Bengali", sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.3rem; margin: 8px 0 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
+  textarea { width:100%; min-height: 260px; font-size: 1.05rem; line-height:1.7; padding:10px; border:1px solid var(--line); border-radius:10px; resize: vertical; font-family: inherit; }
+  label { display:block; font-size:.9rem; color:var(--muted); margin:10px 0 4px; }
+  select, input[type=range] { width:100%; }
+  select { padding:10px; font-size:1rem; border-radius:10px; border:1px solid var(--line); background:#fff; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  button { flex:1 1 auto; min-width: 90px; padding: 14px 10px; font-size:1rem; border:0; border-radius:12px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  button.secondary { background:#e3efec; color:var(--ink); }
+  button:disabled { opacity:.45; }
+  .status { font-size:.9rem; color:var(--muted); margin-top:10px; min-height:1.2em; }
+  .bar { height:8px; background:#e3efec; border-radius:99px; overflow:hidden; margin-top:10px; }
+  .bar > div { height:100%; width:0%; background:var(--accent); transition: width .2s; }
+  .hint { font-size:.85rem; color:var(--muted); line-height:1.5; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔊 টেক্সট টু স্পিচ</h1>
+
+  <div class="card">
+    <label for="text">এখানে লেখা পেস্ট করুন</label>
+    <textarea id="text" placeholder="সূরার বাংলা অনুবাদ এখানে পেস্ট করুন..."></textarea>
+
+    <div class="row">
+      <button class="secondary" id="paste">📋 ক্লিপবোর্ড থেকে পেস্ট</button>
+      <button class="secondary" id="clear">🗑️ মুছুন</button>
+    </div>
+
+    <label for="file">অথবা টেক্সট ফাইল (.txt) খুলুন</label>
+    <input type="file" id="file" accept=".txt,text/plain">
+  </div>
+
+  <div class="card">
+    <label for="voice">ভয়েস</label>
+    <select id="voice"></select>
+
+    <label for="rate">গতি: <span id="rateVal">1.0</span>x</label>
+    <input type="range" id="rate" min="0.5" max="1.5" step="0.1" value="1">
+
+    <div class="row">
+      <button id="play">▶️ শুরু</button>
+      <button id="pause" class="secondary" disabled>⏸️ বিরতি</button>
+      <button id="stop" class="secondary" disabled>⏹️ থামান</button>
+    </div>
+
+    <div class="bar"><div id="progress"></div></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <p class="hint">
+    বাংলা ভয়েস না পেলে ফোনের সেটিংসে গিয়ে Google Text-to-speech অ্যাপে বাংলা ভয়েস ডাউনলোড করুন, তারপর পাতাটি রিফ্রেশ করুন।
+    লম্বা লেখা অংশে অংশে পড়া হয়, তাই কিছুক্ষণ পর পর হালকা বিরতি থাকতে পারে।
+  </p>
+</main>
+
+<script>
+(function () {
+  const synth = window.speechSynthesis;
+  const $ = (id) => document.getElementById(id);
+  const textEl = $("text"), voiceEl = $("voice"), rateEl = $("rate"), rateVal = $("rateVal");
+  const playBtn = $("play"), pauseBtn = $("pause"), stopBtn = $("stop");
+  const statusEl = $("status"), progressEl = $("progress");
+
+  let voices = [];
+  let chunks = [];
+  let index = 0;
+  let state = "idle"; // idle | playing | paused
+  let token = 0;      // বাতিল করা কলব্যাক চেনার জন্য
+
+  if (!synth) {
+    statusEl.textContent = "দুঃখিত, এই ব্রাউজারে টেক্সট-টু-স্পিচ সমর্থিত নয়। Chrome ব্যবহার করে দেখুন।";
+    playBtn.disabled = true;
+    return;
+  }
+
+  function loadVoices() {
+    voices = synth.getVoices();
+    const bn = voices.filter(v => /^bn/i.test(v.lang));
+    const list = bn.length ? bn : voices;
+    voiceEl.innerHTML = "";
+    list.forEach((v) => {
+      const o = document.createElement("option");
+      o.value = voices.indexOf(v);
+      o.textContent = v.name + " (" + v.lang + ")";
+      voiceEl.appendChild(o);
+    });
+    if (!bn.length) {
+      statusEl.textContent = "বাংলা ভয়েস পাওয়া যায়নি, অন্য ভাষার ভয়েস দেখানো হচ্ছে। নিচের নির্দেশনা দেখুন।";
+    } else if (statusEl.textContent.indexOf("বাংলা ভয়েস পাওয়া") === 0) {
+      statusEl.textContent = "";
+    }
+  }
+  loadVoices();
+  if (typeof synth.onvoiceschanged !== "undefined") synth.onvoiceschanged = loadVoices;
+
+  // লেখাকে ছোট ছোট অংশে ভাগ করা (ব্রাউজার লম্বা লেখা মাঝপথে থামিয়ে দেয়)
+  function splitText(text) {
+    const out = [];
+    const lines = text.replace(/\r/g, "").split(/\n+/);
+    lines.forEach((line) => {
+      line = line.trim();
+      if (!line) return;
+      const parts = line.match(/[^।?!.]+[।?!.]?/g) || [line];
+      let buf = "";
+      parts.forEach((p) => {
+        if ((buf + p).length > 180) {
+          if (buf.trim()) out.push(buf.trim());
+          buf = p;
+        } else {
+          buf += p;
+        }
+      });
+      if (buf.trim()) out.push(buf.trim());
+    });
+    return out;
+  }
+
+  function setUI(s) {
+    state = s;
+    playBtn.disabled = s === "playing";
+    pauseBtn.disabled = s !== "playing";
+    stopBtn.disabled = s === "idle";
+    playBtn.textContent = s === "paused" ? "▶️ আবার চালু" : "▶️ শুরু";
+  }
+
+  function updateProgress() {
+    const pct = chunks.length ? Math.round((index / chunks.length) * 100) : 0;
+    progressEl.style.width = pct + "%";
+    if (state !== "idle") statusEl.textContent = "পড়া হচ্ছে: " + Math.min(index + 1, chunks.length) + " / " + chunks.length;
+  }
+
+  function speakCurrent() {
+    if (index >= chunks.length) {
+      progressEl.style.width = "100%";
+      statusEl.textContent = "পড়া শেষ হয়েছে।";
+      setUI("idle");
+      return;
+    }
+    const myToken = ++token;
+    const u = new SpeechSynthesisUtterance(chunks[index]);
+    const v = voices[parseInt(voiceEl.value, 10)];
+    if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = "bn-BD"; }
+    u.rate = parseFloat(rateEl.value);
+    u.onend = () => {
+      if (myToken !== token || state !== "playing") return;
+      index++;
+      updateProgress();
+      speakCurrent();
+    };
+    u.onerror = (e) => {
+      if (myToken !== token) return;
+      if (e.error === "interrupted" || e.error === "canceled") return;
+      statusEl.textContent = "ত্রুটি: " + e.error;
+      setUI("idle");
+    };
+    synth.speak(u);
+    updateProgress();
+  }
+
+  playBtn.addEventListener("click", () => {
+    if (state === "paused") {
+      setUI("playing");
+      speakCurrent();
+      return;
+    }
+    const text = textEl.value.trim();
+    if (!text) { statusEl.textContent = "আগে কিছু লেখা পেস্ট করুন।"; return; }
+    synth.cancel();
+    chunks = splitText(text);
+    index = 0;
+    setUI("playing");
+    speakCurrent();
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    if (state !== "playing") return;
+    token++;
+    synth.cancel();
+    setUI("paused");
+    statusEl.textContent = "বিরতি দেওয়া হয়েছে (" + (index + 1) + " / " + chunks.length + ")";
+  });
+
+  stopBtn.addEventListener("click", () => {
+    token++;
+    synth.cancel();
+    index = 0;
+    progressEl.style.width = "0%";
+    setUI("idle");
+    statusEl.textContent = "থামানো হয়েছে।";
+  });
+
+  rateEl.addEventListener("input", () => { rateVal.textContent = parseFloat(rateEl.value).toFixed(1); });
+
+  $("clear").addEventListener("click", () => { textEl.value = ""; });
+
+  $("paste").addEventListener("click", async () => {
+    try {
+      textEl.value = await navigator.clipboard.readText();
+    } catch (e) {
+      statusEl.textContent = "পেস্ট করা যায়নি। বক্সে চেপে ধরে নিজে পেস্ট করুন।";
+    }
+  });
+
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { textEl.value = r.result; };
+    r.readAsText(f, "UTF-8");
+  });
+
+  window.addEventListener("beforeunload", () => synth.cancel());
+})();
+</script>
+</body>
+</html>
