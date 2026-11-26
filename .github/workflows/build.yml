@@ -18,10 +18,34 @@ jobs:
         run: |
           mkdir www
           cp index.html www/
+          cat > poly.js <<'EOF'
+          if (!window.speechSynthesis && window.Capacitor) {
+            var TTS = window.Capacitor.registerPlugin('TextToSpeech');
+            var gen = 0;
+            window.SpeechSynthesisUtterance = function (t) { this.text = t; this.rate = 1; this.lang = 'bn-BD'; };
+            window.speechSynthesis = {
+              getVoices: function () { return [{ name: 'ফোনের ভয়েস', lang: 'bn-BD' }]; },
+              speak: function (u) {
+                var my = gen;
+                TTS.speak({ text: u.text, lang: 'bn-BD', rate: u.rate || 1, pitch: 1, volume: 1, category: 'ambient' })
+                  .then(function () { if (my === gen && u.onend) u.onend(); })
+                  .catch(function (e) { if (my === gen && u.onerror) u.onerror({ error: String(e) }); });
+              },
+              cancel: function () { gen++; try { TTS.stop(); } catch (e) {} }
+            };
+          }
+          EOF
+          python3 - <<'PY'
+          p = open('poly.js', encoding='utf-8').read()
+          h = open('www/index.html', encoding='utf-8').read()
+          h = h.replace('<head>', '<head><script>' + p + '</script>', 1)
+          open('www/index.html', 'w', encoding='utf-8').write(h)
+          PY
           npm init -y
-          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npm i @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor-community/text-to-speech@5
           npx cap init "TTS App" com.tts.app --web-dir www
           npx cap add android
+          sed -i 's#<application#<queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries><application#' android/app/src/main/AndroidManifest.xml
           npx cap sync android
           cd android
           chmod +x gradlew
